@@ -1,0 +1,8 @@
+.git
+README.md
+CONTRIBUTORS
+LICENSE
+Dockerfile
+build.sh
+.gitignore
+.dockerignore
