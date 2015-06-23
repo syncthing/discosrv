@@ -13,18 +13,87 @@ import (
 
 /*
 
+relay Structure:
+
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Length of address                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/                                                               /
+\                   address (variable length)                   \
+/                                                               /
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                            latency                            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+
+struct relay {
+	string address<>;
+	int latency;
+}
+
+*/
+
+func (o relay) EncodeXDR(w io.Writer) (int, error) {
+	var xw = xdr.NewWriter(w)
+	return o.EncodeXDRInto(xw)
+}
+
+func (o relay) MarshalXDR() ([]byte, error) {
+	return o.AppendXDR(make([]byte, 0, 128))
+}
+
+func (o relay) MustMarshalXDR() []byte {
+	bs, err := o.MarshalXDR()
+	if err != nil {
+		panic(err)
+	}
+	return bs
+}
+
+func (o relay) AppendXDR(bs []byte) ([]byte, error) {
+	var aw = xdr.AppendWriter(bs)
+	var xw = xdr.NewWriter(&aw)
+	_, err := o.EncodeXDRInto(xw)
+	return []byte(aw), err
+}
+
+func (o relay) EncodeXDRInto(xw *xdr.Writer) (int, error) {
+	xw.WriteString(o.address)
+	xw.WriteUint32(uint32(o.latency))
+	return xw.Tot(), xw.Error()
+}
+
+func (o *relay) DecodeXDR(r io.Reader) error {
+	xr := xdr.NewReader(r)
+	return o.DecodeXDRFrom(xr)
+}
+
+func (o *relay) UnmarshalXDR(bs []byte) error {
+	var br = bytes.NewReader(bs)
+	var xr = xdr.NewReader(br)
+	return o.DecodeXDRFrom(xr)
+}
+
+func (o *relay) DecodeXDRFrom(xr *xdr.Reader) error {
+	o.address = xr.ReadString()
+	o.latency = int32(xr.ReadUint32())
+	return xr.Error()
+}
+
+/*
+
 address Structure:
 
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                         Length of ip                          |
+|                       Length of address                       |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /                                                               /
-\                     ip (variable length)                      \
+\                   address (variable length)                   \
 /                                                               /
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|            0x0000             |             port              |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                                                               |
 +                        seen (64 bits)                         +
@@ -33,8 +102,7 @@ address Structure:
 
 
 struct address {
-	opaque ip<>;
-	unsigned int port;
+	string address<>;
 	hyper seen;
 }
 
@@ -42,41 +110,47 @@ struct address {
 
 func (o address) EncodeXDR(w io.Writer) (int, error) {
 	var xw = xdr.NewWriter(w)
-	return o.encodeXDR(xw)
+	return o.EncodeXDRInto(xw)
 }
 
-func (o address) MarshalXDR() []byte {
+func (o address) MarshalXDR() ([]byte, error) {
 	return o.AppendXDR(make([]byte, 0, 128))
 }
 
-func (o address) AppendXDR(bs []byte) []byte {
-	var aw = xdr.AppendWriter(bs)
-	var xw = xdr.NewWriter(&aw)
-	o.encodeXDR(xw)
-	return []byte(aw)
+func (o address) MustMarshalXDR() []byte {
+	bs, err := o.MarshalXDR()
+	if err != nil {
+		panic(err)
+	}
+	return bs
 }
 
-func (o address) encodeXDR(xw *xdr.Writer) (int, error) {
-	xw.WriteBytes(o.ip)
-	xw.WriteUint16(o.port)
+func (o address) AppendXDR(bs []byte) ([]byte, error) {
+	var aw = xdr.AppendWriter(bs)
+	var xw = xdr.NewWriter(&aw)
+	_, err := o.EncodeXDRInto(xw)
+	return []byte(aw), err
+}
+
+func (o address) EncodeXDRInto(xw *xdr.Writer) (int, error) {
+	xw.WriteString(o.address)
 	xw.WriteUint64(uint64(o.seen))
 	return xw.Tot(), xw.Error()
 }
 
 func (o *address) DecodeXDR(r io.Reader) error {
 	xr := xdr.NewReader(r)
-	return o.decodeXDR(xr)
+	return o.DecodeXDRFrom(xr)
 }
 
 func (o *address) UnmarshalXDR(bs []byte) error {
 	var br = bytes.NewReader(bs)
 	var xr = xdr.NewReader(br)
-	return o.decodeXDR(xr)
+	return o.DecodeXDRFrom(xr)
 }
 
-func (o *address) decodeXDR(xr *xdr.Reader) error {
-	o.ip = xr.ReadBytes()
-	o.port = xr.ReadUint16()
+func (o *address) DecodeXDRFrom(xr *xdr.Reader) error {
+	o.address = xr.ReadString()
 	o.seen = int64(xr.ReadUint64())
 	return xr.Error()
 }
@@ -94,54 +168,84 @@ addressList Structure:
 \                Zero or more address Structures                \
 /                                                               /
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Number of relays                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/                                                               /
+\                 Zero or more relay Structures                 \
+/                                                               /
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 
 struct addressList {
 	address addresses<>;
+	relay relays<>;
 }
 
 */
 
 func (o addressList) EncodeXDR(w io.Writer) (int, error) {
 	var xw = xdr.NewWriter(w)
-	return o.encodeXDR(xw)
+	return o.EncodeXDRInto(xw)
 }
 
-func (o addressList) MarshalXDR() []byte {
+func (o addressList) MarshalXDR() ([]byte, error) {
 	return o.AppendXDR(make([]byte, 0, 128))
 }
 
-func (o addressList) AppendXDR(bs []byte) []byte {
-	var aw = xdr.AppendWriter(bs)
-	var xw = xdr.NewWriter(&aw)
-	o.encodeXDR(xw)
-	return []byte(aw)
+func (o addressList) MustMarshalXDR() []byte {
+	bs, err := o.MarshalXDR()
+	if err != nil {
+		panic(err)
+	}
+	return bs
 }
 
-func (o addressList) encodeXDR(xw *xdr.Writer) (int, error) {
+func (o addressList) AppendXDR(bs []byte) ([]byte, error) {
+	var aw = xdr.AppendWriter(bs)
+	var xw = xdr.NewWriter(&aw)
+	_, err := o.EncodeXDRInto(xw)
+	return []byte(aw), err
+}
+
+func (o addressList) EncodeXDRInto(xw *xdr.Writer) (int, error) {
 	xw.WriteUint32(uint32(len(o.addresses)))
 	for i := range o.addresses {
-		o.addresses[i].encodeXDR(xw)
+		_, err := o.addresses[i].EncodeXDRInto(xw)
+		if err != nil {
+			return xw.Tot(), err
+		}
+	}
+	xw.WriteUint32(uint32(len(o.relays)))
+	for i := range o.relays {
+		_, err := o.relays[i].EncodeXDRInto(xw)
+		if err != nil {
+			return xw.Tot(), err
+		}
 	}
 	return xw.Tot(), xw.Error()
 }
 
 func (o *addressList) DecodeXDR(r io.Reader) error {
 	xr := xdr.NewReader(r)
-	return o.decodeXDR(xr)
+	return o.DecodeXDRFrom(xr)
 }
 
 func (o *addressList) UnmarshalXDR(bs []byte) error {
 	var br = bytes.NewReader(bs)
 	var xr = xdr.NewReader(br)
-	return o.decodeXDR(xr)
+	return o.DecodeXDRFrom(xr)
 }
 
-func (o *addressList) decodeXDR(xr *xdr.Reader) error {
+func (o *addressList) DecodeXDRFrom(xr *xdr.Reader) error {
 	_addressesSize := int(xr.ReadUint32())
 	o.addresses = make([]address, _addressesSize)
 	for i := range o.addresses {
-		(&o.addresses[i]).decodeXDR(xr)
+		(&o.addresses[i]).DecodeXDRFrom(xr)
+	}
+	_relaysSize := int(xr.ReadUint32())
+	o.relays = make([]relay, _relaysSize)
+	for i := range o.relays {
+		(&o.relays[i]).DecodeXDRFrom(xr)
 	}
 	return xr.Error()
 }

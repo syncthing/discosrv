@@ -3,13 +3,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -47,7 +47,7 @@ func main() {
 	var unknownFile string
 	var dbDir string
 
-	flag.StringVar(&listen, "listen", ":22026", "Listen address")
+	flag.StringVar(&listen, "listen", ":22027", "Listen address")
 	flag.BoolVar(&debug, "debug", false, "Enable debug output")
 	flag.BoolVar(&timestamp, "timestamp", true, "Timestamp the log output")
 	flag.IntVar(&statsIntv, "stats-intv", 0, "Statistics output interval (s)")
@@ -200,14 +200,22 @@ func handleAnnounceV2(db *leveldb.DB, addr *net.UDPAddr, buf []byte) error {
 	var addrs []address
 	now := time.Now().Unix()
 	for _, addr := range pkt.This.Addresses {
-		tip := addr.IP
-		if len(tip) == 0 {
-			tip = ip
+		uri, err := url.Parse(addr)
+		if err != nil {
+			continue
 		}
+		host, port, err := net.SplitHostPort(uri.Host)
+		if err != nil {
+			continue
+		}
+
+		if len(host) == 0 {
+			uri.Host = net.JoinHostPort(ip.String(), port)
+		}
+
 		addrs = append(addrs, address{
-			ip:   tip,
-			port: addr.Port,
-			seen: now,
+			address: uri.String(),
+			seen:    now,
 		})
 	}
 
@@ -222,7 +230,7 @@ func handleAnnounceV2(db *leveldb.DB, addr *net.UDPAddr, buf []byte) error {
 		}
 	}
 
-	update(db, id, addrs)
+	update(db, id, addrs, pkt.This.Relays)
 	return nil
 }
 
@@ -251,21 +259,30 @@ func handleQueryV2(db *leveldb.DB, conn *net.UDPConn, addr *net.UDPAddr, buf []b
 	queries++
 	lock.Unlock()
 
-	addrs := get(db, id)
+	addrs, relays := get(db, id)
+
+	drelays := make([]discover.Relay, 0, len(relays))
+	for _, relay := range relays {
+		drelays = append(drelays, discover.Relay{
+			Address: relay.address,
+			Latency: relay.latency,
+		})
+	}
 
 	now := time.Now().Unix()
 	if len(addrs) > 0 {
 		ann := discover.Announce{
 			Magic: discover.AnnouncementMagic,
 			This: discover.Device{
-				ID: pkt.DeviceID,
+				ID:     pkt.DeviceID,
+				Relays: drelays,
 			},
 		}
 		for _, addr := range addrs {
 			if now-addr.seen > cacheLimitSeconds {
 				continue
 			}
-			ann.This.Addresses = append(ann.This.Addresses, discover.Address{IP: addr.ip, Port: addr.port})
+			ann.This.Addresses = append(ann.This.Addresses, addr.address)
 		}
 		if debug {
 			log.Printf("-> %v %#v", addr, pkt)
@@ -320,16 +337,16 @@ func logStats(statsLog io.Writer, intv int) {
 	}
 }
 
-func get(db *leveldb.DB, id protocol.DeviceID) []address {
+func get(db *leveldb.DB, id protocol.DeviceID) ([]address, []relay) {
 	var addrs addressList
 	val, err := db.Get(id[:], nil)
 	if err == nil {
 		addrs.UnmarshalXDR(val)
 	}
-	return addrs.addresses
+	return addrs.addresses, addrs.relays
 }
 
-func update(db *leveldb.DB, id protocol.DeviceID, addrs []address) {
+func update(db *leveldb.DB, id protocol.DeviceID, addrs []address, relays []discover.Relay) {
 	var newAddrs addressList
 
 	val, err := db.Get(id[:], nil)
@@ -340,7 +357,29 @@ func update(db *leveldb.DB, id protocol.DeviceID, addrs []address) {
 nextAddr:
 	for _, newAddr := range addrs {
 		for i, exAddr := range newAddrs.addresses {
-			if bytes.Compare(newAddr.ip, exAddr.ip) == 0 {
+			// If only the port has changed, replace the address in full,
+			// otherwise append it as a new address.
+			newAddrUri, err := url.Parse(newAddr.address)
+			if err != nil {
+				continue nextAddr
+			}
+			newAddrHost, _, err := net.SplitHostPort(newAddrUri.Host)
+			if err != nil {
+				continue nextAddr
+			}
+			newAddrUri.Host = net.JoinHostPort(newAddrHost, "22000")
+
+			exAddrUri, err := url.Parse(exAddr.address)
+			if err != nil {
+				continue
+			}
+			exAddrHost, _, err := net.SplitHostPort(exAddrUri.Host)
+			if err != nil {
+				continue
+			}
+			exAddrUri.Host = net.JoinHostPort(exAddrHost, "22000")
+
+			if exAddrUri.String() == newAddrUri.String() {
 				newAddrs.addresses[i] = newAddr
 				continue nextAddr
 			}
@@ -348,7 +387,21 @@ nextAddr:
 		newAddrs.addresses = append(newAddrs.addresses, newAddr)
 	}
 
-	db.Put(id[:], newAddrs.MarshalXDR(), nil)
+	// Replace the relays with the latest
+	lrelays := make([]relay, 0, len(relays))
+	for _, rlay := range relays {
+		lrelays = append(lrelays, relay{
+			address: rlay.Address,
+			latency: rlay.Latency,
+		})
+	}
+	newAddrs.relays = lrelays
+
+	data, err := newAddrs.MarshalXDR()
+	if err != nil {
+		return
+	}
+	db.Put(id[:], data, nil)
 }
 
 func clean(statsLog io.Writer, db *leveldb.DB) {
@@ -381,7 +434,11 @@ func clean(statsLog io.Writer, db *leveldb.DB) {
 			// Update changed records
 			if len(newAddrs) != len(addrs.addresses) {
 				addrs.addresses = newAddrs
-				db.Put(iter.Key(), addrs.MarshalXDR(), nil)
+				data, err := addrs.MarshalXDR()
+				if err != nil {
+					continue
+				}
+				db.Put(iter.Key(), data, nil)
 			}
 			kept++
 		}
