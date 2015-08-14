@@ -2,12 +2,18 @@
 
 package main
 
+// Cannot reuse discover type, as generating XDR fails.
+type relay struct {
+	address string
+	latency int32 // milliseconds
+}
+
 type address struct {
-	ip   []byte
-	port uint16
-	seen int64 // epoch seconds
+	address string
+	seen    int64 // epoch seconds
 }
 
 type addressList struct {
 	addresses []address
+	relays    []relay
 }
