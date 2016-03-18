@@ -107,12 +107,6 @@
 			"branch": "master"
 		},
 		{
-			"importpath": "github.com/syncthing/discosrv",
-			"repository": "https://github.com/syncthing/discosrv",
-			"revision": "d770b46fe26d15155baad54a8023fe7eb58257cc",
-			"branch": "master"
-		},
-		{
 			"importpath": "github.com/syncthing/syncthing/lib/logger",
 			"repository": "https://github.com/syncthing/syncthing",
 			"revision": "aba2cc4db2e8b63307ab89900b01b9544f0f34f7",
@@ -131,6 +125,13 @@
 			"repository": "https://github.com/thejerf/suture",
 			"revision": "9aa867b8dfeb152610cbea5a2a73342f6977b1c1",
 			"branch": "master"
+		},
+		{
+			"importpath": "golang.org/x/net/context",
+			"repository": "https://go.googlesource.com/net",
+			"revision": "35b06af0720201bc2f326773a80767387544f8c4",
+			"branch": "master",
+			"path": "/context"
 		},
 		{
 			"importpath": "golang.org/x/text/transform",
