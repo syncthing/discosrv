@@ -26,13 +26,6 @@
 			"branch": "master"
 		},
 		{
-			"importpath": "github.com/camlistore/go4/lock",
-			"repository": "https://github.com/camlistore/go4",
-			"revision": "03efcb870d84809319ea509714dd6d19a1498483",
-			"branch": "master",
-			"path": "/lock"
-		},
-		{
 			"importpath": "github.com/cznic/b",
 			"repository": "https://github.com/cznic/b",
 			"revision": "47184dd8c1d2c7e7f87dae8448ee2007cdf0c6c4",
@@ -43,13 +36,6 @@
 			"repository": "https://github.com/cznic/bufs",
 			"revision": "3dcccbd7064a1689f9c093a988ea11ac00e21f51",
 			"branch": "master"
-		},
-		{
-			"importpath": "github.com/cznic/exp/lldb",
-			"repository": "https://github.com/cznic/exp",
-			"revision": "c21cce1fce3e6e5bc84854aa3d02a808de44229b",
-			"branch": "master",
-			"path": "/lldb"
 		},
 		{
 			"importpath": "github.com/cznic/fileutil",
@@ -66,7 +52,7 @@
 		{
 			"importpath": "github.com/cznic/ql",
 			"repository": "https://github.com/cznic/ql",
-			"revision": "174fcfbe04fb58d2c2a34c4a85a36e46ad8b281f",
+			"revision": "16df2de8e03c0d80c4045de3b3ebad1f1f10d62c",
 			"branch": "master"
 		},
 		{

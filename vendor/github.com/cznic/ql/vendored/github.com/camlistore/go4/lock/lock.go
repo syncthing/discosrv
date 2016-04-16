@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Package lock is a file locking library.
-package lock // import "go4.org/lock"
+package lock
 
 import (
 	"encoding/json"
