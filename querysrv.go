@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -37,6 +38,11 @@ type announcement struct {
 	Seen   time.Time
 	Direct []string   `json:"direct"`
 	Relays []annRelay `json:"relays"`
+}
+
+type announcement13 struct {
+	Seen      time.Time
+	Addresses []string `json:"addresses"`
 }
 
 type annRelay struct {
@@ -120,7 +126,8 @@ func (s *querysrv) Serve() {
 		s.listener = tlsListener
 	}
 
-	http.HandleFunc("/", s.handler)
+	http.HandleFunc("/", s.makeHandler(v12encoder, v12decoder))
+	http.HandleFunc("/v13", s.makeHandler(v13encoder, v13decoder))
 	http.HandleFunc("/ping", handlePing)
 
 	srv := &http.Server{
@@ -136,62 +143,67 @@ func (s *querysrv) Serve() {
 
 var topCtx = context.Background()
 
-func (s *querysrv) handler(w http.ResponseWriter, req *http.Request) {
-	reqID := requestID(rand.Int63())
-	ctx := context.WithValue(topCtx, "id", reqID)
+type encoder func(announcement, io.Writer)
+type decoder func(io.ReadCloser) (announcement, error)
 
-	if debug {
-		log.Println(reqID, req.Method, req.URL)
-	}
+func (s *querysrv) makeHandler(encoder encoder, decoder decoder) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		reqID := requestID(rand.Int63())
+		ctx := context.WithValue(topCtx, "id", reqID)
 
-	t0 := time.Now()
-	defer func() {
-		diff := time.Since(t0)
-		var comment string
-		if diff > time.Second {
-			comment = "(very slow request)"
-		} else if diff > 100*time.Millisecond {
-			comment = "(slow request)"
+		if debug {
+			log.Println(reqID, req.Method, req.URL)
 		}
-		if comment != "" || debug {
-			log.Println(reqID, req.Method, req.URL, "completed in", diff, comment)
-		}
-	}()
 
-	var remoteIP net.IP
-	if useHttp {
-		remoteIP = net.ParseIP(req.Header.Get("X-Forwarded-For"))
-	} else {
-		addr, err := net.ResolveTCPAddr("tcp", req.RemoteAddr)
-		if err != nil {
-			log.Println("remoteAddr:", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		t0 := time.Now()
+		defer func() {
+			diff := time.Since(t0)
+			var comment string
+			if diff > time.Second {
+				comment = "(very slow request)"
+			} else if diff > 100*time.Millisecond {
+				comment = "(slow request)"
+			}
+			if comment != "" || debug {
+				log.Println(reqID, req.Method, req.URL, "completed in", diff, comment)
+			}
+		}()
+
+		var remoteIP net.IP
+		if useHttp {
+			remoteIP = net.ParseIP(req.Header.Get("X-Forwarded-For"))
+		} else {
+			addr, err := net.ResolveTCPAddr("tcp", req.RemoteAddr)
+			if err != nil {
+				log.Println("remoteAddr:", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			remoteIP = addr.IP
+		}
+
+		if s.limit(remoteIP) {
+			if debug {
+				log.Println(remoteIP, "is limited")
+			}
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "Too Many Requests", 429)
 			return
 		}
-		remoteIP = addr.IP
-	}
 
-	if s.limit(remoteIP) {
-		if debug {
-			log.Println(remoteIP, "is limited")
+		switch req.Method {
+		case "GET":
+			s.handleGET(ctx, w, req, encoder)
+		case "POST":
+			s.handlePOST(ctx, remoteIP, w, req, decoder)
+		default:
+			globalStats.Error()
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
-		w.Header().Set("Retry-After", "60")
-		http.Error(w, "Too Many Requests", 429)
-		return
-	}
-
-	switch req.Method {
-	case "GET":
-		s.handleGET(ctx, w, req)
-	case "POST":
-		s.handlePOST(ctx, remoteIP, w, req)
-	default:
-		globalStats.Error()
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (s *querysrv) handleGET(ctx context.Context, w http.ResponseWriter, req *http.Request) {
+func (s *querysrv) handleGET(ctx context.Context, w http.ResponseWriter, req *http.Request, encoder encoder) {
 	reqID := ctx.Value("id").(requestID)
 
 	deviceID, err := protocol.DeviceIDFromString(req.URL.Query().Get("device"))
@@ -252,10 +264,11 @@ func (s *querysrv) handleGET(ctx context.Context, w http.ResponseWriter, req *ht
 	globalStats.Answer()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ann)
+
+	encoder(ann, w)
 }
 
-func (s *querysrv) handlePOST(ctx context.Context, remoteIP net.IP, w http.ResponseWriter, req *http.Request) {
+func (s *querysrv) handlePOST(ctx context.Context, remoteIP net.IP, w http.ResponseWriter, req *http.Request, decoder decoder) {
 	reqID := ctx.Value("id").(requestID)
 
 	rawCert := certificateBytes(req)
@@ -268,8 +281,8 @@ func (s *querysrv) handlePOST(ctx context.Context, remoteIP net.IP, w http.Respo
 		return
 	}
 
-	var ann announcement
-	if err := json.NewDecoder(req.Body).Decode(&ann); err != nil {
+	ann, err := decoder(req.Body)
+	if err != nil {
 		if debug {
 			log.Println(reqID, "decode:", err)
 		}
@@ -540,4 +553,50 @@ func certificateBytes(req *http.Request) []byte {
 	}
 
 	return nil
+}
+
+func v12encoder(ann announcement, w io.Writer) {
+	json.NewEncoder(w).Encode(ann)
+}
+
+func v12decoder(r io.ReadCloser) (announcement, error) {
+	var ann announcement
+	err := json.NewDecoder(r).Decode(&ann)
+	return ann, err
+}
+
+func v13encoder(ann announcement, w io.Writer) {
+	addrs := append([]string{}, ann.Direct...)
+	for _, relay := range ann.Relays {
+		addrs = append(addrs, relay.URL)
+	}
+	ann13 := announcement13{
+		Seen:      ann.Seen,
+		Addresses: addrs,
+	}
+	json.NewEncoder(w).Encode(ann13)
+}
+
+func v13decoder(r io.ReadCloser) (announcement, error) {
+	var ann13 announcement13
+	var ann announcement
+	err := json.NewDecoder(r).Decode(&ann13)
+	if err != nil {
+		return ann, err
+	}
+
+	for _, addr := range ann13.Addresses {
+		if uri, err := url.Parse(addr); err == nil {
+			if uri.Scheme == "relay" {
+				ann.Relays = append(ann.Relays, annRelay{
+					URL:     addr,
+					Latency: 0,
+				})
+			} else {
+				ann.Direct = append(ann.Direct, addr)
+			}
+		}
+	}
+
+	return ann, nil
 }
