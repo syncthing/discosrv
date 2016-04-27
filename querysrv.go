@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -22,6 +23,11 @@ import (
 	"github.com/juju/ratelimit"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"golang.org/x/net/context"
+)
+
+var (
+	ipv4 = regexp.MustCompile(`^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$`)
+	ipv6 = regexp.MustCompile(`^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z ]{1,}|::%[0-9a-zA-Z ]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$`)
 )
 
 type querysrv struct {
@@ -322,16 +328,7 @@ func (s *querysrv) handleAnnounce(ctx context.Context, remote net.IP, deviceID p
 			return
 		}
 
-		host, port, err := net.SplitHostPort(uri.Host)
-		if err != nil {
-			userErr = err
-			return
-		}
-
-		ip := net.ParseIP(host)
-		if len(ip) == 0 || ip.IsUnspecified() {
-			uri.Host = net.JoinHostPort(remote.String(), port)
-		}
+		uri.Host = adjustHost(uri.Host, remote.String())
 
 		if err := s.updateAddress(ctx, tx, deviceID, uri.String()); err != nil {
 			internalErr = err
@@ -473,4 +470,25 @@ func certificateBytes(req *http.Request) []byte {
 	}
 
 	return nil
+}
+
+func adjustHost(announced, remote string) string {
+	// Not all hostnames announced might make sense from the discovery servers
+	// perspective, hence resolving them might make no sense.
+	if host, port, err := net.SplitHostPort(announced); err == nil {
+		if host == "" || ipv4.MatchString(host) || ipv6.MatchString(host) {
+			ip := net.ParseIP(host)
+			if len(ip) == 0 || ip.IsUnspecified() {
+				return net.JoinHostPort(remote, port)
+			}
+		}
+	} else {
+		if announced == "" || ipv4.MatchString(announced) || ipv6.MatchString(announced) {
+			ip := net.ParseIP(announced)
+			if len(ip) == 0 || ip.IsUnspecified() {
+				return remote
+			}
+		}
+	}
+	return announced
 }
