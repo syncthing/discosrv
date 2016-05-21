@@ -46,13 +46,13 @@ func (s *stats) Error() {
 	s.mut.Unlock()
 }
 
-func (s *stats) Reset() stats {
+func (s *stats) Reset() *stats {
 	s.mut.Lock()
 	ns := *s
 	s.announces, s.queries, s.answers, s.errors = 0, 0, 0, 0
 	s.reset = time.Now()
 	s.mut.Unlock()
-	return ns
+	return &ns
 }
 
 type statssrv struct {
@@ -80,7 +80,7 @@ func (s *statssrv) Stop() {
 	panic("stop unimplemented")
 }
 
-func (s *statssrv) writeToFile(stats stats, secs float64) {
+func (s *statssrv) writeToFile(stats *stats, secs float64) {
 	newLine := []byte("\n")
 
 	var addrs int
