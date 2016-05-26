@@ -322,17 +322,6 @@ func (s *querysrv) handleAnnounce(ctx context.Context, remote net.IP, deviceID p
 			return
 		}
 
-		host, port, err := net.SplitHostPort(uri.Host)
-		if err != nil {
-			userErr = err
-			return
-		}
-
-		ip := net.ParseIP(host)
-		if len(ip) == 0 || ip.IsUnspecified() {
-			uri.Host = net.JoinHostPort(remote.String(), port)
-		}
-
 		if err := s.updateAddress(ctx, tx, deviceID, uri.String()); err != nil {
 			internalErr = err
 			return
